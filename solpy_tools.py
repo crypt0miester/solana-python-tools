@@ -9,8 +9,11 @@ from solana.rpc.api import Client
 from solana.publickey import PublicKey
 from solana.rpc.types import MemcmpOpts
 import base64
+from solana.rpc.types import TokenAccountOpts
+import time
 
 METADATA_PROGRAM_ID = PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s')
+TOKEN_PROGRAM_ID = PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
 
 def get_keypair_from_raw_private_key(raw_private_key: list[bytes] | bytes | str | list[int]) -> Keypair:
@@ -44,15 +47,25 @@ def get_metadata_account(mint_key: PublicKey | str) -> PublicKey:
     )[0]
 
 
-def get_nfts_raw_data_from_collection_creator(api_endpoint: str,
-                                              creator_address: str) -> tuple():
+def get_nfts_raw_data_from_collection_creator(client: Client,
+                                              creator_address: str | PublicKey) -> tuple():
     """Fetch nfts from collection creator. Maybe Deprecated."""
-    client = Client(api_endpoint)
     memcmp_opts = [MemcmpOpts(offset=326, bytes=creator_address)]
     resp = client.get_program_accounts(
         METADATA_PROGRAM_ID, encoding="base64", memcmp_opts=memcmp_opts)
     nft_count = len(resp['result'])
     return resp['result'], nft_count
+
+
+def get_nfts_from_address(client: Client,
+                          address: PublicKey) -> tuple():
+    """Fetchs tokens/nfts from address."""
+    resp = client.get_token_accounts_by_owner(
+        address, TokenAccountOpts(program_id=TOKEN_PROGRAM_ID),
+        'max')
+    tokens_owned = resp['result']['value']
+    nft_count = len(tokens_owned)
+    return tokens_owned, nft_count
 
 
 def unpack_metadata_account_v2(data):
@@ -149,7 +162,17 @@ def unpack_metadata_account_v2(data):
     return metadata
 
 
+def get_metadata(client: Client, mint_key: PublicKey) -> dict:
+    """Fetchs tokens/nfts from address."""
+    metadata_account = get_metadata_account(mint_key)
+    data = base64.b64decode(client.get_account_info(
+        metadata_account)['result']['value']['data'][0])
+    metadata = unpack_metadata_account_v2(data)
+    return metadata
+
+
 def get_mint_metadata_from_collection_data(raw_collection_data: list) -> list:
+    """Parses tokens/nfts from collection data."""
     if len(raw_collection_data) == 0:
         print("No data found")
         return
@@ -162,14 +185,8 @@ def get_mint_metadata_from_collection_data(raw_collection_data: list) -> list:
     return unpacked_data_list
 
 
-def print_first_mint_metadata_from_collection_data(raw_collection_data: list) -> None:
-    if len(raw_collection_data) == 0:
-        print("No data found")
-        return
-
-    raw_data_decoded = base64.b64decode(
-        raw_collection_data[0]['account']['data'][0])
-    unpacked_data = unpack_metadata_account_v2(raw_data_decoded)
+def print_unpacked_metadata_nicely(unpacked_data: dict) -> None:
+    """Prints first metadata nicely."""
     print(f"nft name                = {unpacked_data['data']['name']}")
     print(f"mint address            = {unpacked_data['mint']}")
     print(f"update authority        = {unpacked_data['update_authority']}")
@@ -181,9 +198,10 @@ def print_first_mint_metadata_from_collection_data(raw_collection_data: list) ->
         f"royalty/sbfp (%)        = {unpacked_data['data']['seller_fee_basis_points'] / 100}")
     print(f"image link              = {unpacked_data['data']['uri']}")
     print("")
-    print(
-        f"collection | verified   = {unpacked_data['collection']['key']} | {unpacked_data['collection']['verified']}")
-    print("")
+    if unpacked_data['collection']:
+        print(
+            f"collection | verified   = {unpacked_data['collection']['key']} | {unpacked_data['collection']['verified']}")
+        print("")
     print(f"creators | verified | share(%)")
     for index in range(len(unpacked_data['data']['creators'])):
         print(
@@ -191,8 +209,53 @@ def print_first_mint_metadata_from_collection_data(raw_collection_data: list) ->
     print("")
 
 
+def print_first_mint_metadata_from_collection_data(raw_collection_data: list) -> None:
+    """Unpacks and prints first token/nft from collection data nicely."""
+    if len(raw_collection_data) == 0:
+        print("No data found")
+        return
+
+    raw_data_decoded = base64.b64decode(
+        raw_collection_data[0]['account']['data'][0])
+    unpacked_data = unpack_metadata_account_v2(raw_data_decoded)
+    print_unpacked_metadata_nicely(unpacked_data)
+
+
 def load_system_wallet(path: str = ".config/solana/id.json"):
+    """Loads system wallet."""
     path = Path(getenv("SOL_WALLET", Path.home() / path))
     with path.open() as f:
         keypair = json.load(f)
     return Keypair.from_secret_key(bytes(keypair))
+
+
+def get_mint_metadata_from_owner_data(client: Client,
+                                      raw_owner_data: list,
+                                      print_metadata: bool = True,
+                                      sleep_in_sec: int = 1) -> list:
+    """Fetch nfts from owner address. and prints metadata nicely."""
+    unpacked_data_list: list = []
+
+    if len(raw_owner_data) == 0:
+        print("No data found")
+        return unpacked_data_list
+
+    for raw_data in raw_owner_data:
+        token_address = raw_data['pubkey']
+        token_address_info = client.get_account_info(
+            token_address, 'max', 'jsonParsed')
+        mint_address = token_address_info['result']['value'][
+            'data']['parsed']['info']['mint']
+        supply = token_address_info['result'][
+            'value']['data']['parsed']['info']['tokenAmount'][
+                'amount']
+        if supply == '1':
+            metadata = get_metadata(client, mint_address)
+            unpacked_data_list.append(metadata)
+            if print_metadata:
+                print_unpacked_metadata_nicely(metadata)
+
+        # avoid being rate limited
+        time.sleep(sleep_in_sec)
+
+    return unpacked_data_list
