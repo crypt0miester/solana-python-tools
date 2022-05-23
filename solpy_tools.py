@@ -165,18 +165,20 @@ def unpack_metadata_account_v2(data):
 def get_metadata(client: Client, mint_key: PublicKey) -> dict:
     """Fetchs tokens/nfts from address."""
     metadata_account = get_metadata_account(mint_key)
-    data = base64.b64decode(client.get_account_info(
-        metadata_account)['result']['value']['data'][0])
-    metadata = unpack_metadata_account_v2(data)
-    return metadata
+    if metadata_account:
+        data = base64.b64decode(client.get_account_info(
+            metadata_account)['result']['value']['data'][0])
+        metadata = unpack_metadata_account_v2(data)
+        return metadata
+    return {}
 
 
 def get_mint_metadata_from_collection_data(raw_collection_data: list) -> list:
     """Parses tokens/nfts from collection data."""
+    unpacked_data_list: list = []
     if len(raw_collection_data) == 0:
         print("No data found")
-        return
-    unpacked_data_list: list = []
+        return unpacked_data_list
     for raw_data in raw_collection_data:
         raw_data_decoded = base64.b64decode(raw_data['account']['data'][0])
         unpacked_data = unpack_metadata_account_v2(raw_data_decoded)
@@ -221,12 +223,16 @@ def print_first_mint_metadata_from_collection_data(raw_collection_data: list) ->
     print_unpacked_metadata_nicely(unpacked_data)
 
 
-def load_system_wallet(path: str = ".config/solana/id.json"):
+def load_system_wallet(path: str = ".config/solana/id.json") -> Keypair | None:
     """Loads system wallet."""
     path = Path(getenv("SOL_WALLET", Path.home() / path))
-    with path.open() as f:
-        keypair = json.load(f)
-    return Keypair.from_secret_key(bytes(keypair))
+    if path.exists():
+        with path.open() as f:
+            keypair = json.load(f)
+        return Keypair.from_secret_key(bytes(keypair))
+    else:
+        print("Wallet not found")
+        return None
 
 
 def get_mint_metadata_from_owner_data(client: Client,
