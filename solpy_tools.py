@@ -165,11 +165,15 @@ def unpack_metadata_account_v2(data):
 def get_metadata(client: Client, mint_key: PublicKey) -> dict:
     """Fetchs tokens/nfts from address."""
     metadata_account = get_metadata_account(mint_key)
-    if metadata_account:
+    try:
         data = base64.b64decode(client.get_account_info(
             metadata_account)['result']['value']['data'][0])
+
         metadata = unpack_metadata_account_v2(data)
         return metadata
+    except Exception as e:
+        print(e)
+        print("Metadata not found")
     return {}
 
 
